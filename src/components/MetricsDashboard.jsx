@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts';
-import { Treemap } from 'recharts';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import Papa from 'papaparse';
 import _ from 'lodash';
+import { Card, CardContent } from "@/components/ui/card";
+import FilterBar from './FilterBar';
+import VisualizationGrid from './VisualizationGrid';
 
 const SIZE_ORDER = {
   'nano': 1,
@@ -57,21 +57,29 @@ const MetricsDashboard = () => {
   const [sizeData, setSizeData] = useState([]);
   const [errorThresholdData, setErrorThresholdData] = useState([]);
   const [correlationData, setCorrelationData] = useState([]);
+  const [regionData, setRegionData] = useState([]);
+  const [instanceFamilyData, setInstanceFamilyData] = useState([]);
+  const [azErrorData, setAzErrorData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null); // Add error state
   const [filters, setFilters] = useState({
     av_zones: [],
     instance_types: [],
     sizes: [],
     time_horizons: [],
-    generations: [],    // new
-    modifiers: []       // new
+    generations: [],
+    modifiers: [],
+    region: [],
+    instance_family: []
   });
   const [filterOptions, setFilterOptions] = useState({
     av_zones: [],
     instance_types: [],
     sizes: [],
-    generations: [],    // new
-    modifiers: []       // new
+    generations: [],
+    modifiers: [],
+    region: [],
+    instance_family: []
   });
 
   const parseModifiers = (modifiersStr) => {
@@ -221,49 +229,130 @@ const MetricsDashboard = () => {
     return denominator === 0 ? 0 : numerator / denominator;
   };
 
+  const processRegionData = (data) => {
+    return _.chain(data)
+      .groupBy('region')
+      .map((group, region) => ({
+         region: region || 'Unknown',
+         count: group.length,
+         rmse: _.meanBy(group, 'rmse') || 0,
+         mape: _.meanBy(group, 'mape') || 0,
+         smape: _.meanBy(group, 'smape') || 0,
+         direction_accuracy: (_.meanBy(group, 'direction_accuracy') || 0) * 100
+      }))
+      .sortBy('region')
+      .value();
+  };
+
+  const processInstanceFamilyData = (data) => {
+    return _.chain(data)
+      .groupBy('instance_family')
+      .map((group, family) => ({
+         instance_family: family || 'Unknown',
+         count: group.length,
+         rmse: _.meanBy(group, 'rmse') || 0,
+         mape: _.meanBy(group, 'mape') || 0,
+         smape: _.meanBy(group, 'smape') || 0,
+         direction_accuracy: (_.meanBy(group, 'direction_accuracy') || 0) * 100
+      }))
+      .sortBy('instance_family')
+      .value();
+  };
+
+  const processAzErrorDistribution = (data) => {
+    return _.chain(data)
+      .groupBy('av_zone')
+      .map((instances, zone) => {
+        const total = instances.length;
+        const distribution = {
+          av_zone: zone
+        };
+
+        // Calculate percentages for each error range
+        const mapeValues = instances.map(d => d.mape);
+        
+        distribution['Very Accurate (< 1%)'] = (mapeValues.filter(v => v <= 1).length / total) * 100;
+        distribution['Good (1-5%)'] = (mapeValues.filter(v => v > 1 && v <= 5).length / total) * 100;
+        distribution['Acceptable (5-10%)'] = (mapeValues.filter(v => v > 5 && v <= 10).length / total) * 100;
+        distribution['Poor (10-20%)'] = (mapeValues.filter(v => v > 10 && v <= 20).length / total) * 100;
+        distribution['Very Poor (20-50%)'] = (mapeValues.filter(v => v > 20 && v <= 50).length / total) * 100;
+        distribution['Unreliable (50-100%)'] = (mapeValues.filter(v => v > 50 && v <= 100).length / total) * 100;
+        distribution['Extreme Error (> 100%)'] = (mapeValues.filter(v => v > 100).length / total) * 100;
+
+        return distribution;
+      })
+      .sortBy('av_zone')
+      .value();
+  };
+
   // New file upload handler
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    setLoading(true);
+    setError(null); // Reset error state
     const reader = new FileReader();
     reader.onload = (event) => {
-      const csvText = event.target.result;
-      const parsed = Papa.parse(csvText, {
-        header: true,
-        dynamicTyping: true,
-        skipEmptyLines: true
-      });
-      const trimmedData = parsed.data.map(d => {
-        for (const key in d) {
-          if (typeof d[key] === 'string') {
-            d[key] = d[key].trim();
+      try {
+        const csvText = event.target.result;
+        const parsed = Papa.parse(csvText, {
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true
+        });
+        const trimmedData = parsed.data.map(d => {
+          for (const key in d) {
+            if (typeof d[key] === 'string') {
+              d[key] = d[key].trim();
+            }
           }
-        }
-        return d;
-      });
-      setRawData(trimmedData);
-      // Update related filter options and processed datasets after upload
-      // ...existing code to extract filter options and process data...
-      const allModifiers = _.uniq(
-        trimmedData.flatMap(d => {
-          // ...existing parseModifiers function...
-          return d.modifiers ? d.modifiers.replace(/[\[\]'" ]/g, '').split(',').filter(m => m) : [];
-        })
-      ).sort();
-      setFilterOptions({
-        av_zones: _.uniq(trimmedData.map(d => d.av_zone)).sort(),
-        instance_types: _.uniq(trimmedData.map(d => d.instance_type)).sort(),
-        sizes: _.uniq(trimmedData.map(d => d.size)).sort(),
-        time_horizons: _.uniq(trimmedData.map(d => d.n_timestep)).sort((a, b) => a - b),
-        generations: _.uniq(trimmedData.map(d => d.generation)).sort(),
-        modifiers: allModifiers
-      });
-      setTimeHorizonData(processTimeHorizonData(trimmedData));
-      setGenerationData(processGenerationData(trimmedData));
-      setSizeData(processSizeData(trimmedData));
-      setErrorThresholdData(processErrorThresholds(trimmedData));
-      setCorrelationData(processCorrelationData(trimmedData));
-      setLoading(false);
+          return d;
+        });
+        setRawData(trimmedData);
+        // Update related filter options and processed datasets after upload
+        // ...existing code to extract filter options and process data...
+        const allModifiers = _.uniq(
+          trimmedData.flatMap(d => {
+            // ...existing parseModifiers function...
+            return d.modifiers ? d.modifiers.replace(/[\[\]'" ]/g, '').split(',').filter(m => m) : [];
+          })
+        ).sort();
+        setFilterOptions({
+          av_zones: _.uniq(trimmedData.map(d => d.av_zone)).sort(),
+          instance_types: _.uniq(trimmedData.map(d => d.instance_type)).sort((a, b) => {
+            const aPrefix = a.split('.')[0];
+            const bPrefix = b.split('.')[0];
+            const aSuffix = a.substring(aPrefix.length + 1);
+            const bSuffix = b.substring(bPrefix.length + 1);
+
+            const aOrder = SIZE_ORDER[aSuffix] || 999;
+            const bOrder = SIZE_ORDER[bSuffix] || 999;
+
+            if (aPrefix === bPrefix) {
+              return aOrder - bOrder;
+            }
+            return aPrefix.localeCompare(bPrefix);
+          }),
+          sizes: _.uniq(trimmedData.map(d => d.size)).sort((a, b) => (SIZE_ORDER[a] || 999) - (SIZE_ORDER[b] || 999)),
+          time_horizons: _.uniq(trimmedData.map(d => d.n_timestep)).sort((a, b) => a - b),
+          generations: _.uniq(trimmedData.map(d => d.generation)).sort(),
+          modifiers: allModifiers,
+          region: _.uniq(trimmedData.map(d => d.region)).sort(),                   // new extraction
+          instance_family: _.uniq(trimmedData.map(d => d.instance_family)).sort()  // new extraction
+        });
+        setTimeHorizonData(processTimeHorizonData(trimmedData));
+        setGenerationData(processGenerationData(trimmedData));
+        setSizeData(processSizeData(trimmedData));
+        setErrorThresholdData(processErrorThresholds(trimmedData));
+        setCorrelationData(processCorrelationData(trimmedData));
+        setRegionData(processRegionData(trimmedData));                      // new
+        setInstanceFamilyData(processInstanceFamilyData(trimmedData));      // new
+        setAzErrorData(processAzErrorDistribution(trimmedData));            // new
+        setLoading(false);
+      } catch (err) {
+        setError('Error processing the CSV file. Please check the file format.');
+        setLoading(false);
+      }
     };
     reader.readAsText(file);
   };
@@ -299,6 +388,12 @@ const MetricsDashboard = () => {
           return filters.modifiers.some(mod => instanceModifiers.includes(mod));
         });
       }
+      if (filters.region.length > 0) {   // new region filtering
+        filteredData = filteredData.filter(d => d.region && filters.region.includes(d.region));
+      }
+      if (filters.instance_family.length > 0) {   // new instance family filtering
+        filteredData = filteredData.filter(d => d.instance_family && filters.instance_family.includes(d.instance_family));
+      }
 
       // Update all datasets with the filtered data
       setTimeHorizonData(processTimeHorizonData(filteredData));
@@ -306,6 +401,9 @@ const MetricsDashboard = () => {
       setSizeData(processSizeData(filteredData));
       setErrorThresholdData(processErrorThresholds(filteredData));
       setCorrelationData(processCorrelationData(filteredData));
+      setRegionData(processRegionData(filteredData));                    // new
+      setInstanceFamilyData(processInstanceFamilyData(filteredData));    // new
+      setAzErrorData(processAzErrorDistribution(filteredData));          // new
     }
   }, [filters, rawData]);
 
@@ -318,323 +416,66 @@ const MetricsDashboard = () => {
 
   if (loading) {
     return (
-      <div className="mb-4">
-        <label className="block text-sm font-medium mb-1">Upload CSV Metrics File</label>
-        <input 
-          type="file" 
-          accept=".csv" 
-          onChange={handleFileUpload} 
-          className="border rounded p-2"
-        />
+      <div className="p-4">
+        <Card className="mb-4">
+          <CardContent className="p-6">
+            <h2 className="text-xl font-bold mb-4">Model Metrics Dashboard</h2>
+            <p className="mb-4">Upload a CSV file containing model metrics data to begin analysis.</p>
+            <div>
+              <label className="block text-sm font-medium mb-1">Upload CSV Metrics File</label>
+              <input 
+                type="file" 
+                accept=".csv" 
+                onChange={handleFileUpload} 
+                className="border rounded p-2"
+              />
+              {error && <p className="text-red-500 mt-2">{error}</p>}
+            </div>
+          </CardContent>
+        </Card>
+        <div className="flex justify-center items-center h-64">
+          <div className="loader">Loading...</div>
+        </div>
       </div>
-    )
+    );
   }
 
   return (
-    <div className="space-y-6 p-4">
-      <Card>
-      <CardHeader>
-          <CardTitle>Filters</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-4 mb-4">
-          <div className="flex flex-col">
-              <label className="text-sm font-medium mb-1">Time Horizons</label>
-              <select 
-                className="border rounded p-1 min-w-48"
-                multiple
-                size={4}
-                value={filters.time_horizons}
-                onChange={(e) => handleFilterChange('time_horizons',
-                  Array.from(e.target.selectedOptions, option => parseInt(option.value))
-                )}
-              >
-                {filterOptions.time_horizons.map(horizon => (
-                  <option key={horizon} value={horizon}>t+{horizon}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col">
-              <label className="text-sm font-medium mb-1">Availability Zones</label>
-              <select 
-                className="border rounded p-1 min-w-48"
-                multiple
-                size={4}
-                value={filters.av_zones}
-                onChange={(e) => handleFilterChange('av_zones', 
-                  Array.from(e.target.selectedOptions, option => option.value)
-                )}
-              >
-                {filterOptions.av_zones.map(zone => (
-                  <option key={zone} value={zone}>{zone}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col">
-              <label className="text-sm font-medium mb-1">Instance Types</label>
-              <select 
-                className="border rounded p-1 min-w-48"
-                multiple
-                size={4}
-                value={filters.instance_types}
-                onChange={(e) => handleFilterChange('instance_types',
-                  Array.from(e.target.selectedOptions, option => option.value)
-                )}
-              >
-                {filterOptions.instance_types.map(type => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col">
-              <label className="text-sm font-medium mb-1">Sizes</label>
-              <select 
-                className="border rounded p-1 min-w-48"
-                multiple
-                size={4}
-                value={filters.sizes}
-                onChange={(e) => handleFilterChange('sizes',
-                  Array.from(e.target.selectedOptions, option => option.value)
-                )}
-              >
-                {filterOptions.sizes.map(size => (
-                  <option key={size} value={size}>{size}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col">
-              <label className="text-sm font-medium mb-1">Generation</label>
-              <select 
-                className="border rounded p-1 min-w-48"
-                multiple
-                size={4}
-                value={filters.generations}
-                onChange={(e) => handleFilterChange('generations',
-                  Array.from(e.target.selectedOptions, option => parseInt(option.value))
-                )}
-              >
-                {filterOptions.generations.map(gen => (
-                  <option key={gen} value={gen}>{gen}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-col">
-              <label className="text-sm font-medium mb-1">Modifiers</label>
-              <select 
-                className="border rounded p-1 min-w-48"
-                multiple
-                size={4}
-                value={filters.modifiers}
-                onChange={(e) => handleFilterChange('modifiers',
-                  Array.from(e.target.selectedOptions, option => option.value)
-                )}
-              >
-                {filterOptions.modifiers.map(mod => (
-                  <option key={mod} value={mod}>
-                    {mod === 'g' ? 'Graviton' :
-                    mod === 'i' ? 'Intel' :
-                    mod === 'a' ? 'AMD' :
-                    mod === 'd' ? 'NVMe' :
-                    mod === 'n' ? 'Network' :
-                    mod}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="text-sm text-gray-500 mb-4">
-            Hold Ctrl/Cmd to select multiple options. Clear all selections to show all data.
-          </div>
-        </CardContent>
-      </Card>
-      
-      <Card>
-      <CardContent>
-        <CardHeader>
-          <CardTitle>Time Horizon Performance Degradation</CardTitle>
-        </CardHeader>
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart 
-                data={timeHorizonData} 
-                margin={{ top: 20, right: 60, left: 60, bottom: 20 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="timestep" 
-                  // label={{ value: 'Time Horizon (steps)', position: 'insideBottom', offset: -10 }}
-                />
-                <YAxis 
-                  yAxisId="left" 
-                  label={{ value: 'Error Metrics', angle: -90, position: 'insideLeft', offset: 10 }}
-                />
-                <YAxis 
-                  yAxisId="right" 
-                  orientation="right" 
-                  label={{ value: 'Standard deviation', angle: 90, position: 'insideRight', offset: 10 }}
-                />
-                <Tooltip />
-                <Legend />
-                {/* <Line yAxisId="left" type="monotone" dataKey="rmse" stroke={METRIC_COLOUR['rmse']} name="RMSE" /> */}
-                <Line yAxisId="right" type="monotone" dataKey="smape_cv" stroke={METRIC_COLOUR['smape_cv']} name="STD" />
-                <Line yAxisId="left" type="monotone" dataKey="mape" stroke={METRIC_COLOUR['mape']} name="MAPE" />
-                <Line yAxisId="left" type="monotone" dataKey="smape" stroke={METRIC_COLOUR['smape']} name="SMAPE" />
-                {/* <Line yAxisId="right" type="monotone" dataKey="direction_accuracy" stroke="#ff7300" name="Direction Accuracy" /> */}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Performance by Instance Generation</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart 
-                data={generationData}
-                margin={{ top: 20, right: 60, left: 60, bottom: 20 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="generation" />
-                <YAxis 
-                  yAxisId="left" 
-                  label={{ value: 'RMSE', angle: -90, position: 'insideLeft', offset: 10 }}
-                />
-                <YAxis 
-                  yAxisId="right" 
-                  orientation="right" 
-                  label={{ value: 'Direction Accuracy (%)', angle: 90, position: 'insideRight', offset: 10 }}
-                />
-                <Tooltip />
-                <Legend />
-                <Bar yAxisId="left" dataKey="rmse" fill={METRIC_COLOUR['rmse']} name="RMSE" />
-                <Bar yAxisId="right" dataKey="direction_accuracy" fill={METRIC_COLOUR['direction_accuracy']} name="Direction Accuracy" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Performance by Instance Size</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart 
-                data={sizeData}
-                margin={{ top: 20, right: 60, left: 60, bottom: 60 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis 
-                  dataKey="size" 
-                  angle={-45} 
-                  textAnchor="end" 
-                  height={60}
-                />
-                <YAxis 
-                  yAxisId="left" 
-                  label={{ value: 'Error Metrics', angle: -90, position: 'insideLeft', offset: 10 }}
-                />
-                {/* <YAxis 
-                  yAxisId="right" 
-                  orientation="right" 
-                  label={{ value: 'Direction Accuracy (%)', angle: 90, position: 'insideRight', offset: 10 }}
-                /> */}
-                <YAxis 
-                  yAxisId="right" 
-                  orientation="right" 
-                  label={{ value: 'Root Mean Squared Error', angle: 90, position: 'insideRight', offset: 10 }}
-                />
-                <Tooltip />
-                <Legend />
-                {/* <Bar yAxisId="right" dataKey="rmse" fill={METRIC_COLOUR['rmse']} name="RMSE" /> */}
-                <Bar yAxisId="right" dataKey="smape_cv" fill={METRIC_COLOUR['smape_cv']} name="STD" />
-                <Bar yAxisId="left" dataKey="mape" fill={METRIC_COLOUR['mape']} name="MAPE" />
-                <Bar yAxisId="left" dataKey="smape" fill={METRIC_COLOUR['smape']} name="SMAPE" />
-                {/* <Bar yAxisId="right" dataKey="direction_accuracy" fill={METRIC_COLOUR['direction_accuracy']} name="Direction Accuracy" /> */}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Prediction Error Distribution by Instance Size</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
-                data={errorThresholdData}
-                margin={{ top: 20, right: 30, left: 120, bottom: 20 }}
-                layout="vertical"
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" unit="%" />
-                <YAxis dataKey="size" type="category" width={80} />
-                <Tooltip formatter={(value) => `${value.toFixed(1)}%`} />
-                <Legend verticalAlign="bottom" height={36} />
-                
-                {ERROR_CATEGORIES.map(({ label, color }) => (
-                  <Bar key={label} dataKey={label} stackId="a" fill={color} />
-                ))}
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-{/* 
-      <Card>
-        <CardHeader>
-          <CardTitle>Correlation Analysis</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-96">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={correlationData}
-                layout="vertical"
-                margin={{ top: 20, right: 60, left: 120, bottom: 20 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  type="number"
-                  domain={[-1, 1]}
-                  tickCount={5}
-                />
-                <YAxis
-                  type="category"
-                  dataKey="metric"
-                  tickFormatter={(value) => `${value}-${correlationData.find(d => d.metric === value)?.characteristic || ''}`}
-                />
-                <Tooltip
-                  formatter={(value) => value.toFixed(3)}
-                />
-                <Bar
-                  dataKey="correlation"
-                  fill={(d) => d.correlation > 0 ? 
-                    `rgb(0, ${Math.floor(Math.abs(d.correlation) * 255)}, 0)` :
-                    `rgb(${Math.floor(Math.abs(d.correlation) * 255)}, 0, 0)`}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card> */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium mb-1">Upload CSV Metrics File</label>
-        <input 
-          type="file" 
-          accept=".csv" 
-          onChange={handleFileUpload} 
-          className="border rounded p-2"
+    <div className="flex flex-col h-screen overflow-hidden">
+      {/* Fixed Filter Bar */}
+      <div className="flex-shrink-0 z-10 sticky top-0 bg-white">
+        <FilterBar 
+          filterOptions={filterOptions} 
+          filters={filters} 
+          handleFilterChange={handleFilterChange} 
         />
+      </div>
+      
+      {/* Scrollable Visualization Area */}
+      <div className="flex-grow overflow-y-auto p-4">
+        <VisualizationGrid
+          timeHorizonData={timeHorizonData}
+          generationData={generationData}
+          sizeData={sizeData}
+          errorThresholdData={errorThresholdData}
+          regionData={regionData}
+          instanceFamilyData={instanceFamilyData}
+          azErrorData={azErrorData}
+        />
+        
+        {/* File Upload option at the bottom */}
+        <Card className="mt-4">
+          <CardContent className="p-4">
+            <label className="block text-sm font-medium mb-1">Upload New CSV Metrics File</label>
+            <input 
+              type="file" 
+              accept=".csv" 
+              onChange={handleFileUpload} 
+              className="border rounded p-2"
+            />
+            {error && <p className="text-red-500 mt-2">{error}</p>}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
