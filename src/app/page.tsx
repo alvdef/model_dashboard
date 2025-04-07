@@ -1,6 +1,6 @@
-'use client'
+"use client";
 
-import MetricsDashboard from '@/components/MetricsDashboard'
+import MetricsDashboard from "@/components/MetricsDashboard";
 
 export default function DashboardPage() {
   return (
@@ -8,5 +8,5 @@ export default function DashboardPage() {
       <h1>Dashboard</h1>
       <MetricsDashboard />
     </div>
-  )
+  );
 }
