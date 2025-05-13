@@ -50,64 +50,9 @@ export const getMapeColor = (mape) => {
   return "#991b1b"; // Very high error - dark red
 };
 
-// Helper: create cumulative distribution for trend and savings
-const createCumulativeDistribution = (raw, minDefault, maxDefault, filterStep) => {
-  const values = raw.map((d) => d.value);
-  const minVal = Math.min(...values, minDefault);
-  const maxVal = Math.max(...values, maxDefault);
-  const min = Math.floor(minVal);
-  const max = Math.ceil(maxVal);
-  const bins = Array.from({ length: max - min + 1 }, (_, i) => ({ value: min + i, percentage: 0, cumulativePercentage: 0 }));
-  raw.forEach(({ value, percentage }) => {
-    const idx = Math.min(Math.max(Math.round(value) - min, 0), bins.length - 1);
-    bins[idx].percentage += percentage;
-  });
-  let cum = 0;
-  bins.forEach((b) => {
-    cum += b.percentage;
-    b.cumulativePercentage = parseFloat(cum.toFixed(2));
-  });
-  let lower = min;
-  let upper = max;
-  bins.forEach((b) => {
-    if (b.cumulativePercentage >= 2 && lower === min) lower = b.value;
-    if (b.cumulativePercentage >= 98 && upper === max) upper = b.value;
-  });
-  const mirrorLow = min + max - upper;
-  const mirrorHigh = min + max - lower;
-  const domainLow = Math.min(lower, mirrorLow);
-  const domainHigh = Math.max(upper, mirrorHigh);
-  const filtered = bins.filter((b) => b.percentage > 0 || b.value % filterStep === 0 || b.value === lower || b.value === upper);
-  return { filtered, domain: [domainLow, domainHigh] };
-};
-
 // Time Horizon Chart Component
 export const TimeHorizonChart = ({ data, comparisonMode }) => {
-  console.log('TimeHorizonChart render:', { 
-    comparisonMode, 
-    dataLengths: comparisonMode ? 
-      { primary: data.primary.data.length, secondary: data.secondary.data.length } : data.length,
-    dataDetails: comparisonMode ? {
-      primary: {
-        name: data.primary.name,
-        firstPoint: data.primary.data[0],
-        lastPoint: data.primary.data[data.primary.data.length-1],
-        avgMape: data.primary.data.reduce((acc, point) => acc + point.mape, 0) / data.primary.data.length
-      },
-      secondary: {
-        name: data.secondary.name,
-        firstPoint: data.secondary.data[0],
-        lastPoint: data.secondary.data[data.secondary.data.length-1],
-        avgMape: data.secondary.data.reduce((acc, point) => acc + point.mape, 0) / data.secondary.data.length
-      }
-    } : null
-  });
-  
   if (comparisonMode) {
-    // Add labels with calculated overall average MAPE for each model
-    const primaryAvgMape = data.primary.data.reduce((sum, point) => sum + point.mape, 0) / data.primary.data.length;
-    const secondaryAvgMape = data.secondary.data.reduce((sum, point) => sum + point.mape, 0) / data.secondary.data.length;
-    
     return (
       <ResponsiveContainer width="100%" height="100%">
         <LineChart margin={{ top: 10, right: 50, left: 40, bottom: 10 }}>
@@ -147,7 +92,7 @@ export const TimeHorizonChart = ({ data, comparisonMode }) => {
             data={data.primary.data}
             dataKey="mape"
             stroke="#8884d8"
-            name={`MAPE - ${data.primary.name} : ${primaryAvgMape.toFixed(2)}%`}
+            name={`MAPE - ${data.primary.name}`}
           />
           <Line
             yAxisId="left"
@@ -155,7 +100,7 @@ export const TimeHorizonChart = ({ data, comparisonMode }) => {
             data={data.secondary.data}
             dataKey="mape"
             stroke="#82ca9d"
-            name={`MAPE - ${data.secondary.name} : ${secondaryAvgMape.toFixed(2)}%`}
+            name={`MAPE - ${data.secondary.name}`}
           />
         </LineChart>
       </ResponsiveContainer>
@@ -207,30 +152,167 @@ export const TimeHorizonChart = ({ data, comparisonMode }) => {
 
 // Distribution Chart Component - updated with better axis formatting and visualization
 export const MetricsDistributionChart = ({ metricsDistributionData }) => {
-  // Trend accuracy distribution
-  const { filtered: cumulativeTrendData, domain: trendDomain } = React.useMemo(() => {
-    const result = createCumulativeDistribution(
-      metricsDistributionData.continuous?.trend || [],
-      0,
-      100,
-      10
+  // Process data for trend accuracy with smarter domain calculation
+  const { cumulativeTrendData, trendDomain } = React.useMemo(() => {
+    if (!metricsDistributionData.continuous?.trend?.length) 
+      return { cumulativeTrendData: [], trendDomain: [0, 100] };
+
+    // Create integer bins from 0 to 100
+    const integerBins = Array.from({ length: 101 }, (_, i) => ({
+      value: i,
+      percentage: 0,
+      cumulativePercentage: 0,
+    }));
+
+    // Sort and process the original data
+    const sortedData = [...metricsDistributionData.continuous.trend].sort(
+      (a, b) => a.value - b.value
     );
-    console.log('Trend distribution result:', result);
-    return result;
+
+    // Map original data to integer bins by rounding the value
+    sortedData.forEach((item) => {
+      const binIndex = Math.round(item.value);
+      if (binIndex >= 0 && binIndex <= 100) {
+        integerBins[binIndex].percentage += item.percentage;
+      }
+    });
+
+    // Calculate cumulative percentages
+    let sum = 0;
+    for (let i = 0; i < integerBins.length; i++) {
+      sum += integerBins[i].percentage;
+      integerBins[i].cumulativePercentage = parseFloat(sum.toFixed(2));
+    }
+
+    // Find where the cumulative percentage crosses 2% and 98%
+    let lowerBound = 0;
+    let upperBound = 100;
+    
+    // Find lower bound (first bin that reaches 2%)
+    for (let i = 0; i < integerBins.length; i++) {
+      if (integerBins[i].cumulativePercentage >= 2) {
+        lowerBound = integerBins[i].value;
+        break;
+      }
+    }
+    
+    // Find upper bound (first bin that reaches 98%)
+    for (let i = 0; i < integerBins.length; i++) {
+      if (integerBins[i].cumulativePercentage >= 98) {
+        upperBound = integerBins[i].value;
+        break;
+      }
+    }
+    
+    // Calculate mirrored domain
+    const mirroredLower = 100 - upperBound;
+    const mirroredUpper = 100 - lowerBound;
+    
+    // Use the smaller of the two values for lower bound and larger for upper bound
+    const finalLowerBound = Math.min(lowerBound, mirroredLower);
+    const finalUpperBound = Math.max(upperBound, mirroredUpper);
+    
+    // Filter for visualization efficiency but keep significant points
+    const filteredData = integerBins.filter(
+      (bin) => bin.percentage > 0 || bin.value % 10 === 0 || 
+               bin.value === lowerBound || bin.value === upperBound
+    );
+    
+    return { 
+      cumulativeTrendData: filteredData,
+      trendDomain: [finalLowerBound, finalUpperBound]
+    };
   }, [metricsDistributionData.continuous?.trend]);
 
-  // Cost savings distribution
-  const { filtered: cumulativeSavingsData, domain: savingsDomain } = React.useMemo(() => {
-    const minDef = metricsDistributionData.minMaxValues?.savingsMin ?? -15;
-    const maxDef = metricsDistributionData.minMaxValues?.savingsMax ?? 25;
-    const result = createCumulativeDistribution(
-      metricsDistributionData.continuous?.savings || [],
-      minDef,
-      maxDef,
-      5
+  // Process data for cost savings with similar smart domain calculation
+  const { cumulativeSavingsData, savingsDomain } = React.useMemo(() => {
+    if (!metricsDistributionData.continuous?.savings?.length) 
+      return { cumulativeSavingsData: [], savingsDomain: [-15, 25] };
+
+    // Get min/max values with sensible defaults
+    const savingsMin = metricsDistributionData.minMaxValues?.savingsMin || -15;
+    const savingsMax = metricsDistributionData.minMaxValues?.savingsMax || 25;
+
+    // Round to whole numbers for simpler bins
+    const minRounded = Math.floor(savingsMin);
+    const maxRounded = Math.ceil(savingsMax);
+    const range = maxRounded - minRounded;
+    
+    // Create integer bins for better axis progression
+    const bins = [];
+    for (let i = minRounded; i <= maxRounded; i++) {
+      bins.push(i);
+    }
+
+    // Initialize bin objects
+    const integerBins = bins.map((value) => ({
+      value,
+      percentage: 0,
+      cumulativePercentage: 0,
+    }));
+
+    // Sort original data
+    const sortedData = [...metricsDistributionData.continuous.savings].sort(
+      (a, b) => a.value - b.value
     );
-    console.log('Savings distribution result:', result);
-    return result;
+
+    // Map data to nearest integer bin
+    sortedData.forEach((item) => {
+      const binIndex = Math.round(item.value) - minRounded;
+      if (binIndex >= 0 && binIndex < integerBins.length) {
+        integerBins[binIndex].percentage += item.percentage;
+      }
+    });
+
+    // Calculate cumulative percentages
+    let sum = 0;
+    for (let i = 0; i < integerBins.length; i++) {
+      sum += integerBins[i].percentage;
+      integerBins[i].cumulativePercentage = parseFloat(sum.toFixed(2));
+    }
+
+    // Find where the cumulative percentage crosses 2% and 98%
+    let lowerIndex = 0;
+    let upperIndex = integerBins.length - 1;
+    
+    // Find lower bound (first bin that reaches 2%)
+    for (let i = 0; i < integerBins.length; i++) {
+      if (integerBins[i].cumulativePercentage >= 2) {
+        lowerIndex = i;
+        break;
+      }
+    }
+    
+    // Find upper bound (first bin that reaches 98%)
+    for (let i = 0; i < integerBins.length; i++) {
+      if (integerBins[i].cumulativePercentage >= 98) {
+        upperIndex = i;
+        break;
+      }
+    }
+    
+    const lowerBound = integerBins[lowerIndex].value;
+    const upperBound = integerBins[upperIndex].value;
+    
+    // Calculate mirrored domain relative to the middle of the range
+    const middle = (minRounded + maxRounded) / 2;
+    const mirroredLower = middle - (upperBound - middle);
+    const mirroredUpper = middle + (middle - lowerBound);
+    
+    // Use the smaller of the two values for lower bound and larger for upper bound
+    const finalLowerBound = Math.min(lowerBound, mirroredLower);
+    const finalUpperBound = Math.max(upperBound, mirroredUpper);
+    
+    // Filter for visualization efficiency
+    const filteredData = integerBins.filter(
+      (bin) => bin.percentage > 0 || bin.value % 5 === 0 ||
+               bin.value === lowerBound || bin.value === upperBound
+    );
+    
+    return { 
+      cumulativeSavingsData: filteredData,
+      savingsDomain: [finalLowerBound, finalUpperBound]
+    };
   }, [metricsDistributionData.continuous?.savings, metricsDistributionData.minMaxValues]);
 
   return (

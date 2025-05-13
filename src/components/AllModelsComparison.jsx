@@ -15,13 +15,6 @@ const metricsList = [
 ];
 
 const AllModelsComparison = ({ models, selectedPrimary, selectedSecondary }) => {
-  // Log model metrics for debugging
-  console.log("All models comparison data:", models.map(m => ({ 
-    name: m.name, 
-    metrics: m.metrics,
-    availableKeys: m.metrics ? Object.keys(m.metrics) : []
-  })));
-  
   // Determine best value per metric
   const bestValues = {};
   metricsList.forEach(({ key, lowerIsBetter }) => {
@@ -58,7 +51,7 @@ const AllModelsComparison = ({ models, selectedPrimary, selectedSecondary }) => 
             </tr>
           </thead>
           <tbody>
-            {metricsList.map(({ key, label, lowerIsBetter }) => (
+            {metricsList.map(({ key, label }) => (
               <tr key={key} className="border-t">
                 <td className="py-1 px-2 font-medium whitespace-nowrap truncate">{label}</td>
                 {models.map((m) => {
