@@ -1,0 +1,74 @@
+{
+  "config": {
+    "model_name": "eunorth-c-58-seq-4h-2d",
+    "sequence_config": {
+      "timestep_hours": 4,
+      "sequence_length_days": 20,
+      "window_step_days": 1,
+      "model_pred_days": 2,
+      "evaluation_days": 1,
+      "prediction_length_days": 20
+    },
+    "dataset_features": {
+      "data_folder": "data",
+      "start_date": "2024-04-01",
+      "end_date": "2025-03-26",
+      "regions": [
+        "eu-north-1"
+      ],
+      "instance_filters": {
+        "product_description": [
+          "Linux/UNIX"
+        ],
+        "generation": [
+          "5",
+          "6",
+          "7",
+          "8"
+        ],
+        "architectures": [
+          "x86_64"
+        ],
+        "instance_family": [
+          "c"
+        ],
+        "metal": false
+      },
+      "target_col": "spot_price",
+      "time_col": "price_timestamp"
+    },
+    "dataset_config": {
+      "batch_size": 64
+    },
+    "model_config": {
+      "model_type": "Seq2Seq",
+      "input_size": 1,
+      "hidden_size": 60,
+      "num_layers": 2,
+      "output_scale": 15.0,
+      "shuffle_buffer": 1000,
+      "feature_size": 0,
+      "teacher_forcing_ratio": 0.7
+    },
+    "loss_config": {
+      "loss_type": "MultiStepMSELoss",
+      "mse_weight": 1.0,
+      "trend_weight": 0.0,
+      "significance_threshold": 0.02,
+      "smoothing_factor": 10.0
+    },
+    "training_hyperparams": {
+      "epochs": 40,
+      "learning_rate": "1e-4",
+      "max_learning_rate": "2e-6",
+      "weight_decay": "5e-5",
+      "patience": 10,
+      "pct_start": 0.2,
+      "div_factor": 10
+    },
+    "evaluate_config": {
+      "batch_size": 32,
+      "significance_threshold": 0.02
+    }
+  },
+ ...

@@ -43,6 +43,7 @@ const VisualizationGrid = ({
   generationData,
   sizeData,
   errorThresholdData,
+  errorThresholdDataSecondary,
   regionData,
   instanceFamilyData,
   azErrorData,
@@ -51,6 +52,8 @@ const VisualizationGrid = ({
   metricsDistributionData,
   costEfficiencyData, // New prop
   comparisonMode = false,
+  primaryName = "Primary Model",
+  secondaryName = "Secondary Model",
 }) => {
   // State to manage collapse
   const [hidden, setHidden] = useState({
@@ -167,6 +170,45 @@ const VisualizationGrid = ({
   // Render error distribution by size chart
   const renderErrorThresholdChart = () => {
     if (hidden.errorThreshold) return null;
+
+    if (comparisonMode) {
+      return (
+        <Card className="h-full col-span-1 md:col-span-2">
+          <CardHeader
+            className="py-3 cursor-pointer"
+            onClick={() => toggleVisibility("errorThreshold")}
+          >
+            <CardTitle>Prediction Error Distribution by Size (Comparison)</CardTitle>
+          </CardHeader>
+          <CardContent className="h-[400px]">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-full">
+              <div className="h-full flex flex-col">
+                <CardTitle className="text-sm text-center mb-2">
+                  {primaryName}
+                </CardTitle>
+                <div className="flex-grow h-[90%]">
+                  <ErrorDistributionChart
+                    data={errorThresholdData}
+                    categoryField="size"
+                  />
+                </div>
+              </div>
+              <div className="h-full flex flex-col">
+                <CardTitle className="text-sm text-center mb-2">
+                  {secondaryName}
+                </CardTitle>
+                <div className="flex-grow h-[90%]">
+                  <ErrorDistributionChart
+                    data={errorThresholdDataSecondary}
+                    categoryField="size"
+                  />
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
 
     return (
       <Card className="h-full">
